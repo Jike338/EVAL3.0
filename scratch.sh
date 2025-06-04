@@ -1,19 +1,18 @@
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
 python3 main.py \
-    --dataset_name_path AI4Math/MathVista \
-    --dataset_split testmini \
+    --dataset_name_path /home/jikezhong/EVAL3.0/custom_datasets/mix_data/mix_task_v1_jike.json \
+    --dataset_dir /home/jikezhong/EVAL3.0/custom_datasets/mix_data/mix_data \
     --model_name_path Qwen/Qwen2.5-VL-7B-Instruct \
     --duty_generation \
     --duty_extract_answer \
     --duty_calc_score \
     --delete_prev_file \
     --bs 8 \
-    --gen_prompt_suffix_type dir \
-    --gen_engine hf \
-    --task_name mathvista \
-    --tag dir_t1n1 \
-    --n_generations 1\
+    --gen_prompt_suffix_type cot \
+    --gen_engine vllm \
+    --tag mix_cot \
+    --n_generations 5\
     --temperature 1\
     --debug
 

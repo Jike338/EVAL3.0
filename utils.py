@@ -115,7 +115,7 @@ def safe_equal(prediction, answer):
     Check if the prediction is equal to the answer, even if they are of different types
     """
     try:
-        if prediction == answer:
+        if prediction.lower() == answer.lower():
             return True
         return False
     except Exception as e:

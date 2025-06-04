@@ -51,6 +51,90 @@ class Extractor:
             return match.group(1)
         return None
 
+    @staticmethod
+    def _strip_code_fences(txt: str) -> str:
+        """Remove ``` … ``` fences (with or without language tags)."""
+        return re.sub(r'```[a-zA-Z]*\n?', '', txt).replace('```', '')
+
+    # ---------- bounding‑box ----------
+    def _extract_bbox(self, resp: str) -> str:
+        """
+        Return a clean “[x1,y1,x2,y2]” string or "none".
+        Works for:
+            • plain lists  [10,51,308,415]
+            • floats       [8.64,55.65,331.04,422.2]
+            • JSON blocks  ```json [{"bbox_2d":[…]}] ```
+        """
+        txt = self._strip_code_fences(resp)
+
+        # 1) quick regex ‑– four ints / floats inside [...]
+        m = re.search(
+            r'\[\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*'
+            r'([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*\]', txt
+        )
+        if m:
+            g = m.groups()
+            return f"[{g[0]},{g[1]},{g[2]},{g[3]}]"
+
+        # 2) try JSON parsing for {"bbox_2d":[…]}
+        try:
+            # find the smallest dict that contains "bbox_2d"
+            for snippet in re.findall(r'\{[^{}]*"bbox_2d"[^{}]*\}', txt, flags=re.DOTALL):
+                data = json.loads(snippet)
+                if "bbox_2d" in data:
+                    bbox = data["bbox_2d"]
+                    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                        return f"[{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}]"
+        except Exception:
+            pass
+
+        return "none"
+
+    # ---------- multiple‑choice ----------
+    @staticmethod
+    def _extract_choices(prompt: str):
+        """Return {'A':'…', 'B':'…', …} or None."""
+        if "\nchoices:" not in prompt.lower():
+            return None
+        choices_txt = prompt.split("\nChoices:")[1]
+        pairs = re.findall(r'\(([A-E])\)\s*([^\n]+)', choices_txt)
+        return {l.upper(): v.strip() for l, v in pairs} if pairs else None
+
+    # ---------- public wrapper ----------
+    def _extract_mix_data(self, question_prompt: str, resp: str):
+        """
+        Clean up an individual model response *resp* according to *question_prompt*.
+        """
+        resp = resp.strip()
+        qp_low = question_prompt.lower()
+
+        # ---- 1. multiple‑choice question ----
+        if "\nchoices" in qp_low:
+            choices = self._extract_choices(question_prompt)
+            if not choices:                        # should never happen, but be safe
+                return resp
+
+            # (a) pure letter variants   A  (A)  B:  (c) …
+            m_letter = re.match(r'^\s*\(?([A-E])\)?\s*[:\-]?\s*$', resp, flags=re.I)
+            if m_letter:
+                return choices.get(m_letter.group(1).upper(), resp)
+
+            # (b) inline “(A) 2” – strip marker, keep value
+            m_inline = re.match(r'^\s*\([A-E]\)\s*([^\n]+)$', resp)
+            if m_inline:
+                return m_inline.group(1).strip()
+
+            # (c) mixed answer – just delete “(A)” fragments
+            cleaned = re.sub(r'\s*\([A-E]\)\s*', '', resp).strip()
+            return choices.get(cleaned.upper(), cleaned)  # fall back to raw text
+
+        # ---- 2. bounding‑box style question ----
+        if any(key in qp_low for key in ("bounding box", "bound box", "bbox")):
+            return self._extract_bbox(resp)
+
+        # ---- 3. plain text ----
+        return resp
+
     def _extract(self, question_prompt, raw_responses):
         extracted_responses = []
         for resp in raw_responses:
@@ -62,6 +146,8 @@ class Extractor:
                 resp = self._extract_answer_content(resp)
             elif self.use_gpt_extract:
                 resp = self._extract_with_gpt(question_prompt, resp)
+            elif self.extract_mix:
+                resp = self._extract_mix_data(question_prompt, resp)
             else:
                 raise NotImplementedError(f"No extraction method selected.")
             extracted_responses.append(resp)
@@ -80,10 +166,13 @@ class Extractor:
     def extract_ans_and_save(self):
         if "mathvista" in self.args.task_name.lower():
             self.demo_prompt = demo_prompt_mathvista
-        if "superclevr_counting" in self.args.task_name.lower():
+        elif "superclevr_counting" in self.args.task_name.lower():
             self.demo_prompt = demo_prompt_superclevr_counting
+        elif "mix_data" in self.args.task_name.lower():
+            self.use_quick_extract_w_gpt = False
+            self.extract_mix = True
         else:
-            raise NotImplementedError(f"No extractor defined for task: {self.args.task_name}")
+            self.demo_prompt = demo_prompt_mathvista
         
         self._extract_raw_response()
         self.args.duty_type = "extract"

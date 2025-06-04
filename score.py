@@ -96,6 +96,27 @@ class Scorer:
 
             item['true_false'] = true_false_all
 
+    def _calculate_true_false_bbox_mix_data(self):
+        for item in tqdm(self.items_with_extracted_responses, desc="calculating true false for bounding box..."):
+            if 'true_false' in item:
+                continue
+            question = item['question_prompt']
+
+            if "bounding box" in question.lower():
+                gt = item['answer']
+                pred_all = item['normalized_pred']
+                true_false_all = []
+                for pred in pred_all:
+                    if pred == "none":
+                        true_false_all.append(False)
+                        continue
+                    pred = [round(float(x)) for x in pred.strip("[]").split(",")]
+                    gt = str(gt)
+                    gt = [round(float(x)) for x in gt.strip("[]").split(",")]
+                    true_false = self._iou(pred, gt)
+                    true_false_all.append(true_false)
+                item['true_false'] = true_false_all
+
     # needs to output true_false field
     def _get_normalized_preds_mathvista(self):
         for item in tqdm(self.items_with_extracted_responses, desc="getting normalized prediction..."):
@@ -114,6 +135,17 @@ class Scorer:
             # update pred and true_false to the problem
             item['normalized_pred'] = pred_all
 
+    def _get_normalized_preds_no_action(self):
+        for item in tqdm(self.items_with_extracted_responses, desc="getting normalized prediction..."):
+            if 'normalized_pred' in item:
+                continue
+            pred_all = []
+            extracted_responses = item['extracted_response']
+            for extracted_response in extracted_responses:
+                pred_all.append(extracted_response)
+            # update pred and true_false to the problem
+            item['normalized_pred'] = pred_all
+            
     def _get_normalized_preds_int(self):
         for item in tqdm(self.items_with_extracted_responses, desc="getting normalized prediction..."):
             if 'normalized_pred' in item:
@@ -130,11 +162,27 @@ class Scorer:
 
             item['normalized_pred'] = pred_all
 
+    def _iou(self, box1, box2):
+        inter_x1 = max(box1[0], box2[0])
+        inter_y1 = max(box1[1], box2[1])
+        inter_x2 = min(box1[2] - 1, box2[2] - 1)
+        inter_y2 = min(box1[3] - 1, box2[3] - 1)
+        if inter_x1 < inter_x2 and inter_y1 < inter_y2:
+            inter = (inter_x2 - inter_x1 + 1) * (inter_y2 - inter_y1 + 1)
+        else:
+            inter = 0
+        union = (box1[2] - box1[0]) * (box1[3] - box1[1]) + (box2[2] - box2[0]) * (box2[3] - box2[1]) - inter
+        return float(inter) / union
+
     def calc_score_and_save(self):
         if "mathvista" in self.args.task_name.lower():
             self._get_normalized_preds_mathvista()
         elif "superclevr_counting" in self.args.task_name.lower():
             self._get_normalized_preds_int()
+        elif "mix_data" in self.args.task_name.lower():
+            # we have already normalized preds in extract.py
+            self._get_normalized_preds_no_action()
+            self._calculate_true_false_bbox_mix_data()
         else:
             raise NotImplementedError(f"No score defined for task: {self.args.task_name}")
         

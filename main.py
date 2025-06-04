@@ -6,13 +6,16 @@ from PIL import Image as PILImage
 from argparse import Namespace
 from datasets import load_dataset, Dataset
 from utils import save_response_to_json 
-from data_utils import load_jsonl_with_images_superclever_counting
+from load_clevr_counting import load_jsonl_with_images_superclever_counting
+from load_mix_data import load_json_mixed_data
 
 def get_task_name(args):
     if "mathvista" in args.dataset_name_path.lower():
         args.task_name = "mathvista"
     if all(x in args.dataset_name_path.lower() for x in ("superclevr", "counting")):
         args.task_name = "superclevr_counting"
+    if "mix_data" in args.dataset_name_path.lower():
+        args.task_name = "mix_data"
 
 def get_data_list(dataset_name_path, dataset_split, dataset_dir, sample, seed):
     # ------------------------------------------------------------------
@@ -34,13 +37,18 @@ def get_data_list(dataset_name_path, dataset_split, dataset_dir, sample, seed):
     # 3. Local classic .json  (single JSON array or object)
     # ------------------------------------------------------------------
     elif dataset_name_path.endswith(".json"):
-        with open(dataset_name_path, encoding="utf-8") as f:
-            python_list = json.load(f)               # list[dict] or dict
-        # Convert to Dataset so downstream `.rename_column` works
-        data_list = Dataset.from_list(python_list if isinstance(python_list, list) else [python_list])
-
-    else:
-        raise ValueError(f"Unrecognized file type: {dataset_name_path}")
+        if "mix_data" in dataset_name_path.lower() or "mix_task" in dataset_name_path.lower():
+            # custom loader for your mixed‑data JSON
+            data_list = load_json_mixed_data(
+                json_path=dataset_name_path,
+            # or "test", etc.
+            )
+        else:
+            with open(dataset_name_path, encoding="utf-8") as f:
+                python_list = json.load(f)
+            data_list = Dataset.from_list(
+                python_list if isinstance(python_list, list) else [python_list]
+            )
 
     # ------------------------------------------------------------------
     # Optional sampling logic (unchanged)
@@ -132,7 +140,7 @@ def generate_raw_responses(args):
             end_idx = min(batch_idx + args.bs, len(reformatted_data_list))
             batch_inputs = [reformatted_data_list[i] for i in range(batch_idx, end_idx)]
             batch_outputs = model.generate_response(batch_inputs)
-            
+            print(batch_outputs)
             # update each example
             for idx, question in enumerate(batch_inputs):
                 question = {k: v for k, v in question.items() if k != "decoded_image"}
